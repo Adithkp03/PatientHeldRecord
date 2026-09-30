@@ -1,0 +1,30 @@
+{
+  "name": "patient-held-record",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "seed:synthetic": "node scripts/seed-synthetic.mjs"
+  },
+  "dependencies": {
+    "next": "16.3.7",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.117.2",
+    "zod": "^4.0.0",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "vitest": "5.0.2"
+  },
+  "type": "module"
+}

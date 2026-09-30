@@ -1,0 +1,30 @@
+import {beforeEach,describe,it,expect,vi} from 'vitest';
+import {authorizeOwner,recordSchema,sectionSchema} from '../lib/contracts';
+const state=vi.hoisted(()=>({actor:null as null|{id:string;role:'patient'|'clinician'},rows:new Map<string,unknown>()}));
+vi.mock('@/lib/actor',()=>({currentActor:async()=>({actor:state.actor,db:{from:()=>({upsert:async(row:any)=>{state.rows.set(`${row.owner_id}:${row.section}`,row);return {error:null};},select:()=>{const filters:Record<string,string>={};const query:any={eq:(k:string,v:string)=>{filters[k]=v;return query;},maybeSingle:async()=>({data:state.rows.get(`${filters.owner_id}:${filters.section}`)||null,error:null})};return query;}})}})}));
+import {GET,PUT} from '../app/api/records/[section]/route';
+const ctx=(section='allergies')=>({params:Promise.resolve({section})});
+const get=(query='')=>new Request(`https://demo.invalid/api/records/allergies${query}`);
+const put=(body:unknown)=>new Request('https://demo.invalid/api/records/allergies',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+beforeEach(()=>{state.actor=null;state.rows.clear();});
+describe('ownership and validation',()=>{
+ it('denies unauthenticated owner access',()=>expect(authorizeOwner(null,'a')?.status).toBe(401));
+ it('denies cross-patient access',()=>expect(authorizeOwner({id:'b',role:'patient'},'a')?.status).toBe(403));
+ it('denies clinician CRUD',()=>expect(authorizeOwner({id:'a',role:'clinician'},'a')?.status).toBe(403));
+ it('allows own patient record',()=>expect(authorizeOwner({id:'a',role:'patient'},'a')).toBeNull());
+ it('rejects unknown sections',()=>expect(sectionSchema.safeParse('diagnosis').success).toBe(false));
+ it('rejects body owner overrides',()=>expect(recordSchema.safeParse({entries:[],owner_id:'a'}).success).toBe(false));
+ it('rejects empty labels',()=>expect(recordSchema.safeParse({entries:[{label:' ',detail:''}]}).success).toBe(false));
+ it('rejects too many entries',()=>expect(recordSchema.safeParse({entries:Array(31).fill({label:'x',detail:''})}).success).toBe(false));
+});
+describe('record route behavior with mocked persistence, not a live RLS test',()=>{
+ it('unauthenticated GET and PUT fail',async()=>{expect((await GET(get(),ctx())).status).toBe(401);expect((await PUT(put({entries:[]}),ctx())).status).toBe(401);});
+ it('clinician cannot read or edit',async()=>{state.actor={id:'c',role:'clinician'};expect((await GET(get(),ctx())).status).toBe(403);expect((await PUT(put({entries:[]}),ctx())).status).toBe(403);});
+ it('saves A and reads after refresh; B gets only own empty record',async()=>{state.actor={id:'a',role:'patient'};expect((await PUT(put({entries:[{label:'Synthetic allergy',detail:'Demo'}]}),ctx())).status).toBe(200);expect((await (await GET(get(),ctx())).json()).record.value.entries).toHaveLength(1);state.actor={id:'b',role:'patient'};expect((await (await GET(get(),ctx())).json()).record.value.entries).toHaveLength(0);});
+ it('body patient override fails and cannot change A',async()=>{state.actor={id:'b',role:'patient'};expect((await PUT(put({entries:[],owner_id:'a'}),ctx())).status).toBe(400);expect(state.rows.size).toBe(0);});
+ it('query patient override fails',async()=>{state.actor={id:'b',role:'patient'};expect((await GET(get('?owner_id=a'),ctx())).status).toBe(400);});
+ it('invalid section and malformed JSON fail',async()=>{state.actor={id:'a',role:'patient'};expect((await GET(get(),ctx('bogus'))).status).toBe(400);expect((await PUT(new Request(get().url,{method:'PUT',headers:{'Content-Type':'application/json'},body:'bad'}),ctx())).status).toBe(400);});
+ it('cross-origin and non-JSON writes fail',async()=>{state.actor={id:'a',role:'patient'};expect((await PUT(new Request(get().url,{method:'PUT',headers:{'Content-Type':'application/json',Origin:'https://other.invalid'},body:'{"entries":[]}'}),ctx())).status).toBe(403);expect((await PUT(new Request(get().url,{method:'PUT',body:'{}'}),ctx())).status).toBe(415);});
+ it('logged-out requests fail',async()=>{state.actor={id:'a',role:'patient'};await PUT(put({entries:[]}),ctx());state.actor=null;expect((await GET(get(),ctx())).status).toBe(401);});
+ it('records are no-store and identifiers are omitted',async()=>{state.actor={id:'a',role:'patient'};const r=await GET(get(),ctx());expect(r.headers.get('Cache-Control')).toBe('no-store');expect(await r.text()).not.toContain('owner_id');});
+});
