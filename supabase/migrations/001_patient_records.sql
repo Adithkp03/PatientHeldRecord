@@ -32,3 +32,7 @@ create policy patient_update on public.patient_records for update to authenticat
  owner_id=auth.uid() and exists(select 1 from public.profiles p where p.id=auth.uid() and p.role='patient')
 );
 -- App users cannot assign or change their own role. Provision profiles server-side only.
+-- Secure Supabase projects may disable automatic public-table exposure.
+-- Provisioning runs only from a server-side seed process, never a browser.
+grant usage on schema public to service_role;
+grant select, insert on public.profiles, public.patient_records to service_role;

@@ -1,0 +1,7 @@
+import {readFileSync} from 'node:fs';
+import {describe,it,expect} from 'vitest';
+describe('migration source contract, not live privilege verification',()=>{
+ it('fresh and repair migrations grant server-only seed SELECT/INSERT explicitly',()=>{for(const path of ['001_patient_records.sql','003_explicit_seed_privileges.sql']){const sql=readFileSync(`supabase/migrations/${path}`,'utf8');expect(sql).toContain('grant usage on schema public to service_role;');expect(sql).toContain('grant select, insert on public.profiles, public.patient_records to service_role;');}});
+ it('repair has no authenticated/anon grants or RLS policy change',()=>{const sql=readFileSync('supabase/migrations/003_explicit_seed_privileges.sql','utf8').split('\n').filter(x=>!x.trim().startsWith('--')).join('\n');expect(sql).not.toMatch(/to\s+(authenticated|anon)/i);expect(sql).not.toMatch(/(disable row level security|create policy|drop policy)/i);});
+ it('patient tables remain RLS enabled and profile self updates are not granted',()=>{const sql=readFileSync('supabase/migrations/001_patient_records.sql','utf8');expect(sql).toContain('alter table public.profiles enable row level security;');expect(sql).toContain('alter table public.patient_records enable row level security;');expect(sql).toContain('grant select on public.profiles to authenticated;');expect(sql).not.toMatch(/grant\s+[^;]*update[^;]*profiles[^;]*authenticated/i);});
+});
