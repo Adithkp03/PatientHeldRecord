@@ -8,4 +8,4 @@ export async function parseWrite(request:Request){
  const text=await request.text(); if(text.length>2000) return {error:'INVALID_REQUEST',status:413} as const;
  try{return {value:JSON.parse(text) as unknown};}catch{return {error:'INVALID_REQUEST',status:400} as const;}
 }
-export function rpcStatus(code:string){return ({FORBIDDEN:403,EXPIRED:410,USED:409,INVALID_REQUEST:400,RATE_LIMITED:429} as Record<string,number>)[code]||500;}
+export function rpcStatus(code:string){return ({FORBIDDEN:403,NOT_APPROVED:403,REVOKED:403,EXPIRED:410,USED:409,INVALID_REQUEST:400,RATE_LIMITED:429} as Record<string,number>)[code]||500;}

@@ -4,7 +4,7 @@ A new, synthetic-data-only QR consent prototype for VJH 2k26 Healthcare PS3. Wri
 
 ## Current state
 
-Phase 0 scaffold, phase 1 patient CRUD and phase 2 expiring QR request/claim are implemented. Clinician record reads, patient approval, revoke and audit are **not implemented yet**. Local tests are not evidence of a completed deployed phase gate.
+Phase 0 scaffold, phase 1 patient CRUD and phase 2 expiring QR request/claim are implemented. Phase 3 approval and scoped reads are implemented on a local development branch only, not deployed or accepted. Revoke and audit are **not implemented yet**. Local tests are not evidence of a completed deployed phase gate.
 
 ## Stack
 
@@ -31,7 +31,7 @@ No service-role credential is used by record routes. Patients cannot assign role
 
 ## Test status
 
-32 local tests passed across record and QR routes. Record coverage: unauthenticated GET/PUT, patient ownership helper, cross-patient helper, clinician denial, invalid sections, owner-body/query overrides, malformed records/JSON, local save/read isolation, logged-out route access cross-origin/non-JSON write denial and no-store.
+47 local tests passed across record and QR routes. Record coverage: unauthenticated GET/PUT, patient ownership helper, cross-patient helper, clinician denial, invalid sections, owner-body/query overrides, malformed records/JSON, local save/read isolation, logged-out route access cross-origin/non-JSON write denial and no-store.
 
 Persistence is mocked in the route tests. Live Supabase RLS, session renewal, browser logout/back behavior, migration apply, seed, deployment, two physical phones and real network conditions are **not yet tested**. See `docs/acceptance.md`. The security assertions do not constitute a clinical or regulatory certification.
 
@@ -58,3 +58,9 @@ Camera scanning uses BarcodeDetector when available and manual fallback otherwis
 ### Resuming an interrupted synthetic seed
 
 The seed script reuses exact fixture email accounts and fills only missing profiles/sections. It does not reset passwords, change existing roles or overwrite edited records. A differing fixture profile stops for review. After applying migration 003, rerun with the original seed password environment; accounts already created retain their original password. Never run this script against CareTrail or a real-patient project. Migration source tests check explicit grants but are not live Postgres proof.
+
+## Phase 3 local branch only
+
+Migration `004_explicit_consent.sql` adds RLS-protected grant state and restricted approval/read functions. POST `/api/grants/approve` accepts only request_id; its bound clinician and immutable selected sections come from the stored claimed request. The patient must approve before the 60-second request expiry. Grants last 10 minutes. GET `/api/shared-records/{patientId}?grant_id=...&sections=...` checks the clinician session, patient/grant binding, active/expiry/revoke state and section subset in the database every time. Clinicians have no direct table record grants. The route is distinct from patient-owned `/api/records/{section}`.
+
+Shared view clears values on denied/offline/expired refresh and hides them on tab background. Explicit expiry timer clears at grant expiry. No patient values or tokens in persistent browser storage. Live phase-3 transaction/UI tests are pending; local mocked RPC and migration-source tests are not DB proof. Revocation is not available until phase 4, and this limitation is shown before approval. Never use this prototype with real patient data.

@@ -1,0 +1,33 @@
+import {beforeEach,describe,it,expect,vi} from 'vitest';
+import {approvalSchema,sharedReadSchema} from '../lib/consent';
+import {readFileSync} from 'node:fs';
+const state=vi.hoisted(()=>({actor:null as null|{id:string;role:'patient'|'clinician'},rpc:vi.fn()}));
+vi.mock('@/lib/actor',()=>({currentActor:async()=>({actor:state.actor,db:{rpc:state.rpc}})}));
+import {POST as approve} from '../app/api/grants/approve/route';
+import {GET as read} from '../app/api/shared-records/[patientId]/route';
+const id='8ba13da6-4998-4c8b-808a-b967b9d0251b',grant='29498956-7153-4b0a-99e7-7dff236ef847';
+const approval=(body:unknown={request_id:id})=>new Request('https://demo.invalid/api/grants/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+const get=(query=`grant_id=${grant}&sections=allergies,medicines`)=>new Request(`https://demo.invalid/api/shared-records/${id}?${query}`);
+const ctx={params:Promise.resolve({patientId:id})};
+beforeEach(()=>{state.actor=null;state.rpc.mockReset();});
+describe('explicit approval and every-read boundaries, mocked RPC',()=>{
+ it('rejects section/clinician override in approval body',()=>expect(approvalSchema.safeParse({request_id:id,sections:['recent_history'],clinician_id:'c'}).success).toBe(false));
+ it('requires valid and nonempty selected section subset',()=>{for(const sections of [[],['invalid'],['allergies','allergies']])expect(sharedReadSchema.safeParse({patientId:id,grant_id:grant,sections}).success).toBe(false);});
+ it('approval requires patient identity, read requires clinician',async()=>{expect((await approve(approval())).status).toBe(401);expect((await read(get(),ctx)).status).toBe(401);state.actor={id,role:'clinician'};expect((await approve(approval())).status).toBe(403);state.actor={id,role:'patient'};expect((await read(get(),ctx)).status).toBe(403);expect(state.rpc).not.toHaveBeenCalled();});
+ it('approves only immutable request ID and returns no medical data',async()=>{state.actor={id,role:'patient'};state.rpc.mockResolvedValue({data:{grant_id:grant,sections:['allergies','medicines'],status:'active'},error:null});const r=await approve(approval());expect(r.status).toBe(201);expect(state.rpc).toHaveBeenCalledWith('approve_qr_request',{p_request_id:id});expect(r.headers.get('Cache-Control')).toBe('no-store');expect(await r.text()).not.toContain('records');});
+ it('expired/pending/repeated/other-owner approvals fail closed',async()=>{state.actor={id,role:'patient'};for(const [error,status]of[['EXPIRED',410],['NOT_APPROVED',403],['USED',409],['FORBIDDEN',403]] as const){state.rpc.mockResolvedValue({data:{error},error:null});expect((await approve(approval())).status).toBe(status);}});
+ it('calls DB authorization on every repeated record GET',async()=>{state.actor={id,role:'clinician'};state.rpc.mockResolvedValue({data:{sections:['allergies','medicines'],records:[{section:'allergies',value:{entries:[]}}]},error:null});await read(get(),ctx);const r=await read(get(),ctx);expect(state.rpc).toHaveBeenCalledTimes(2);expect(state.rpc).toHaveBeenLastCalledWith('read_shared_records',{p_patient_id:id,p_grant_id:grant,p_sections:['allergies','medicines']});expect(r.headers.get('Cache-Control')).toBe('no-store');expect(await r.text()).not.toContain('recent_history');});
+ it('excluded section RPC denial has no clinical payload',async()=>{state.actor={id,role:'clinician'};state.rpc.mockResolvedValue({data:{error:'FORBIDDEN'},error:null});const r=await read(get(`grant_id=${grant}&sections=recent_history`),ctx);expect(r.status).toBe(403);expect(await r.json()).toEqual({error:'FORBIDDEN'});});
+ it('missing,expired,revoked and wrong-clinician grant responses deny',async()=>{state.actor={id,role:'clinician'};for(const [error,status]of[['EXPIRED',410],['NOT_APPROVED',403],['REVOKED',403],['FORBIDDEN',403]]as const){state.rpc.mockResolvedValue({data:{error},error:null});const r=await read(get(),ctx);expect(r.status).toBe(status);expect(await r.json()).toEqual({error});}});
+ it('query overrides, duplicate keys and missing grant fail before DB',async()=>{state.actor={id,role:'clinician'};for(const query of [`grant_id=${grant}&sections=allergies&owner_id=a`,`grant_id=${grant}&grant_id=${grant}&sections=allergies`,'sections=allergies',`grant_id=${grant}&sections=allergies&sections=medicines`])expect((await read(get(query),ctx)).status).toBe(400);expect(state.rpc).not.toHaveBeenCalled();});
+ it('logout denies later read',async()=>{state.actor={id,role:'clinician'};state.rpc.mockResolvedValue({data:{records:[]},error:null});await read(get(),ctx);state.actor=null;expect((await read(get(),ctx)).status).toBe(401);expect(state.rpc).toHaveBeenCalledTimes(1);});
+ it('DB failure hides internal error and clinical data',async()=>{state.actor={id,role:'clinician'};state.rpc.mockResolvedValue({data:null,error:{message:'clinical trace'}});const r=await read(get(),ctx);expect(r.status).toBe(503);expect(await r.text()).not.toContain('clinical trace');});
+ it('cross-origin approval denied before DB',async()=>{state.actor={id,role:'patient'};const r=await approve(new Request(approval().url,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://other.invalid'},body:JSON.stringify({request_id:id})}));expect(r.status).toBe(403);expect(state.rpc).not.toHaveBeenCalled();});
+});
+describe('migration source safeguards, not transaction proof',()=>{
+ const sql=readFileSync('supabase/migrations/004_explicit_consent.sql','utf8');
+ it('does not replace the live phase-2 status RPC',()=>{expect(sql).toContain('create function public.qr_request_consent_status');expect(sql).not.toContain('create or replace function public.qr_request_status');expect(sql.startsWith('begin;')).toBe(true);expect(sql.trim().endsWith('commit;')).toBe(true);});
+ it('grant RLS and direct table denial remain',()=>{expect(sql).toContain('alter table public.consent_grants enable row level security;');expect(sql).toContain('revoke all on public.consent_grants from anon,authenticated;');expect(sql).not.toMatch(/grant\s+select\s+on\s+public.patient_records\s+to\s+.*clinician/i);});
+ it('approval serializes and uses request sections, never caller sections',()=>{expect(sql).toContain('where id=p_request_id for update');expect(sql).toContain('values(r.id,r.patient_id,r.clinician_id,r.selected_sections)');});
+ it('read locks grant and checks binding,expiry,revoke and section subset before selecting values',()=>{expect(sql).toContain('where id=p_grant_id for share');expect(sql).toContain('g.clinician_id!=actor');expect(sql).toContain('g.revoked_at is not null');expect(sql).toContain('g.expires_at<=now()');expect(sql.indexOf('if not(p_sections <@ g.allowed_sections)')).toBeLessThan(sql.indexOf('select coalesce(jsonb_agg'));});
+});

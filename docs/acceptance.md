@@ -40,3 +40,9 @@
 Patient selects allergies and medicines, excludes recent history -> shows opaque QR -> signed-in clinician claims -> patient sees name and approves -> clinician reads only those sections -> patient revokes -> refresh and direct GET denied -> patient sees audit sequence.
 
 No two-phone gate or clinical wording review is claimed until it is actually run and recorded.
+
+## September 30 verification snapshot
+
+Phase 1: live Postgres isolation/auth/role tests and deployed browser save, refresh, B-isolation and logout denial reported passed. Phase 2: real DB claim race/replay/rate-limit/role/direct-table/natural-expiry and deployed manual patient/clinician flow reported passed at 2faf76f. Physical camera/two-phone testing is deferred by the owner until the whole build (16:18 IST); this is a limitation, not a pass. Forced-expired-session browser behavior remains unproven. Bundle/source/runtime-log audit covered inspected routes/windows only, not every possible sink or future build.
+
+PR 2 merged after green final CI and owner direction to merge/continue. Phase 3 remains draft and must pass its own live DB/browser checks before merging. No production-domain promotion is performed by this code change.
