@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "demo_id": "demo-generic-001",
+  "display_name": "Synthetic Demo Person",
+  "synthetic": true,
+  "clinical_use": false,
+  "source": "Independently authored generic examples. No Kaggle clinical names, codes, source identifiers or demographic fields copied.",
+  "notice": "Fictional record for consent-flow testing only. Not a clinical history, diagnosis, medicine recommendation or dosing instruction.",
+  "sections": {
+    "allergies": {"entries": [{"label": "Example allergy entry", "detail": "Fictional sensitivity note for testing selected-section sharing. Not a real allergy or a confirmed absence of other allergies."}]},
+    "medicines": {"entries": [{"label": "Example medicine entry", "detail": "Fictional medicine note. No drug name, dose, route or schedule is specified."}]},
+    "recent_history": {"entries": [{"label": "Example previous visit", "detail": "Fictional visit note used to verify that excluded history stays hidden from the clinician."}]}
+  }
+}
