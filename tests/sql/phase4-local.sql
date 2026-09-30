@@ -1,0 +1,40 @@
+\set ON_ERROR_STOP on
+begin;
+insert into auth.users(id) values ('11111111-1111-4111-8111-111111111111'),('22222222-2222-4222-8222-222222222222'),('33333333-3333-4333-8333-333333333333'),('44444444-4444-4444-8444-444444444444');
+insert into public.profiles values ('11111111-1111-4111-8111-111111111111','patient','Demo Patient A'),('22222222-2222-4222-8222-222222222222','patient','Demo Patient B'),('33333333-3333-4333-8333-333333333333','clinician','Demo Clinician A'),('44444444-4444-4444-8444-444444444444','clinician','Demo Clinician B');
+insert into public.patient_records(owner_id,section,value) values ('11111111-1111-4111-8111-111111111111','allergies','{"entries":[{"label":"FICTIONAL_LOCAL_ONLY","detail":""}]}');
+insert into public.qr_requests(id,token_hash,patient_id,selected_sections,clinician_id,status,expires_at) values ('55555555-5555-4555-8555-555555555555','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','11111111-1111-4111-8111-111111111111',array['allergies','medicines']::public.record_section[],'33333333-3333-4333-8333-333333333333','claimed',now()+interval '1 minute');
+create function pg_temp.assert_true(ok boolean,label text) returns void language plpgsql as $$begin if ok is distinct from true then raise exception 'FAIL %',label;end if;raise notice 'PASS %',label;end;$$;
+set local role authenticated;
+select set_config('request.jwt.claim.sub','11111111-1111-4111-8111-111111111111',true);
+select public.approve_qr_request('55555555-5555-4555-8555-555555555555')->>'grant_id' as grant_id \gset
+select pg_temp.assert_true((public.patient_consent_grants()->'grants'->0->>'status')='active','owner active grant list');
+select pg_temp.assert_true((public.patient_access_events()->'events'->0->>'action')='approve','approval audited');
+select pg_temp.assert_true((public.approve_qr_request('55555555-5555-4555-8555-555555555555')->>'error')='USED','duplicate approval denied');
+select set_config('request.jwt.claim.sub','33333333-3333-4333-8333-333333333333',true);
+select pg_temp.assert_true(public.read_shared_records('11111111-1111-4111-8111-111111111111',:'grant_id',array['allergies']::public.record_section[])::text like '%FICTIONAL_LOCAL_ONLY%','allowed read');
+select pg_temp.assert_true(public.read_shared_records('11111111-1111-4111-8111-111111111111',:'grant_id',array['recent_history']::public.record_section[])->>'error'='FORBIDDEN','excluded read denied');
+select pg_temp.assert_true(public.revoke_consent_grant(:'grant_id')->>'error'='FORBIDDEN','clinician revoke denied');
+select pg_temp.assert_true(public.patient_access_events()->>'error'='FORBIDDEN','clinician history denied');
+select set_config('request.jwt.claim.sub','22222222-2222-4222-8222-222222222222',true);
+select pg_temp.assert_true(jsonb_array_length(public.patient_access_events()->'events')=0,'other patient history isolated');
+select pg_temp.assert_true(jsonb_array_length(public.patient_consent_grants()->'grants')=0,'other patient grants isolated');
+select pg_temp.assert_true(public.revoke_consent_grant(:'grant_id')->>'error'='FORBIDDEN','other patient revoke denied');
+select set_config('request.jwt.claim.sub','44444444-4444-4444-8444-444444444444',true);
+select pg_temp.assert_true(public.read_shared_records('11111111-1111-4111-8111-111111111111',:'grant_id',array['allergies']::public.record_section[])->>'error'='FORBIDDEN','other clinician denied');
+select set_config('request.jwt.claim.sub','11111111-1111-4111-8111-111111111111',true);
+select public.revoke_consent_grant(:'grant_id')->>'revoked_at' as revoked_at \gset
+select pg_temp.assert_true(public.revoke_consent_grant(:'grant_id')->>'revoked_at'=:'revoked_at','repeat revoke timestamp stable');
+select pg_temp.assert_true(public.patient_consent_grants()->'grants'->0->>'status'='revoked','list reflects revoke');
+select set_config('request.jwt.claim.sub','33333333-3333-4333-8333-333333333333',true);
+select pg_temp.assert_true(public.read_shared_records('11111111-1111-4111-8111-111111111111',:'grant_id',array['allergies']::public.record_section[])=jsonb_build_object('error','REVOKED'),'revoked direct read no values');
+select set_config('request.jwt.claim.sub','11111111-1111-4111-8111-111111111111',true);
+select pg_temp.assert_true(public.patient_access_events()->'events'->0->>'outcome'='REVOKED','denied read follows revoke in audit');
+select pg_temp.assert_true(jsonb_array_length(public.patient_access_events()->'events')=7,'exact content-free event count');
+select pg_temp.assert_true(public.patient_access_events()::text not like '%FICTIONAL_LOCAL_ONLY%' and public.patient_access_events()::text not like '%fake-local-hash%','audit no clinical/token contents');
+select pg_temp.assert_true(jsonb_array_length(public.patient_access_events((public.patient_access_events()->'events'->3->>'id')::bigint)->'events')=3,'numeric cursor pagination');
+reset role;
+select pg_temp.assert_true(not has_table_privilege('authenticated','public.access_events','INSERT') and not has_table_privilege('authenticated','public.access_events','UPDATE') and not has_table_privilege('authenticated','public.access_events','DELETE') and not has_table_privilege('authenticated','public.access_events','SELECT'),'audit direct-table denial');
+select pg_temp.assert_true(not has_function_privilege('authenticated','public.phase3_read_impl(uuid,uuid,public.record_section[])','EXECUTE'),'hidden implementation inaccessible');
+select pg_temp.assert_true(not has_function_privilege('anon','public.revoke_consent_grant(uuid)','EXECUTE'),'anonymous revoke denied');
+rollback;
