@@ -26,6 +26,7 @@ describe('explicit approval and every-read boundaries, mocked RPC',()=>{
 });
 describe('migration source safeguards, not transaction proof',()=>{
  const sql=readFileSync('supabase/migrations/004_explicit_consent.sql','utf8');
+ it('does not replace the live phase-2 status RPC',()=>{expect(sql).toContain('create function public.qr_request_consent_status');expect(sql).not.toContain('create or replace function public.qr_request_status');expect(sql.startsWith('begin;')).toBe(true);expect(sql.trim().endsWith('commit;')).toBe(true);});
  it('grant RLS and direct table denial remain',()=>{expect(sql).toContain('alter table public.consent_grants enable row level security;');expect(sql).toContain('revoke all on public.consent_grants from anon,authenticated;');expect(sql).not.toMatch(/grant\s+select\s+on\s+public.patient_records\s+to\s+.*clinician/i);});
  it('approval serializes and uses request sections, never caller sections',()=>{expect(sql).toContain('where id=p_request_id for update');expect(sql).toContain('values(r.id,r.patient_id,r.clinician_id,r.selected_sections)');});
  it('read locks grant and checks binding,expiry,revoke and section subset before selecting values',()=>{expect(sql).toContain('where id=p_grant_id for share');expect(sql).toContain('g.clinician_id!=actor');expect(sql).toContain('g.revoked_at is not null');expect(sql).toContain('g.expires_at<=now()');expect(sql.indexOf('if not(p_sections <@ g.allowed_sections)')).toBeLessThan(sql.indexOf('select coalesce(jsonb_agg'));});

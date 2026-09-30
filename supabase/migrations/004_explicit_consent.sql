@@ -1,3 +1,4 @@
+begin;
 -- Phase 3: no clinician table-level record access. Every read is authorized in DB.
 create table public.consent_grants (
  id uuid primary key default gen_random_uuid(),
@@ -41,7 +42,7 @@ begin
  select coalesce(jsonb_agg(jsonb_build_object('section',section,'value',value,'updated_at',updated_at) order by section),'[]'::jsonb) into records from public.patient_records where owner_id=g.patient_id and section=any(p_sections);
  return jsonb_build_object('grant_id',g.id,'sections',p_sections,'expires_at',g.expires_at,'records',records);
 end;$$;
-create or replace function public.qr_request_status(p_id uuid) returns jsonb
+create function public.qr_request_consent_status(p_id uuid) returns jsonb
 language plpgsql security definer set search_path=public,pg_temp as $$
 declare r public.qr_requests; actor uuid:=auth.uid(); name text; g public.consent_grants; payload jsonb;
 begin
@@ -53,5 +54,7 @@ begin
  if g.id is not null then payload:=payload||jsonb_build_object('approval','APPROVED','grant',jsonb_build_object('grant_id',g.id,'patient_id',g.patient_id,'sections',g.allowed_sections,'expires_at',g.expires_at,'status',case when g.revoked_at is not null then 'revoked' when g.expires_at<=now() then 'expired' else 'active' end));end if;
  return payload;
 end;$$;
-revoke all on function public.approve_qr_request(uuid),public.read_shared_records(uuid,uuid,public.record_section[]) from public,anon;
-grant execute on function public.approve_qr_request(uuid),public.read_shared_records(uuid,uuid,public.record_section[]) to authenticated;
+revoke all on function public.approve_qr_request(uuid),public.read_shared_records(uuid,uuid,public.record_section[]),public.qr_request_consent_status(uuid) from public,anon;
+grant execute on function public.approve_qr_request(uuid),public.read_shared_records(uuid,uuid,public.record_section[]),public.qr_request_consent_status(uuid) to authenticated;
+
+commit;
