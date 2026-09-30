@@ -4,7 +4,7 @@ A new, synthetic-data-only QR consent prototype for VJH 2k26 Healthcare PS3. Wri
 
 ## Current state
 
-Phase 0 scaffold and phase 1 patient CRUD have been implemented locally. QR sharing, clinician reads, grant approval/revoke and audit are **not implemented yet**. Local tests are not evidence of a completed deployed phase gate.
+Phase 0 scaffold, phase 1 patient CRUD and phase 2 expiring QR request/claim are implemented. Clinician record reads, patient approval, revoke and audit are **not implemented yet**. Local tests are not evidence of a completed deployed phase gate.
 
 ## Stack
 
@@ -14,7 +14,7 @@ Next.js App Router, TypeScript, Supabase Auth/Postgres with row-level security, 
 
 1. `npm ci`
 2. Copy `.env.example` to `.env.local`. Use a dedicated Supabase project, never CareTrail's database or keys. Provide the project URL and publishable key.
-3. Apply `supabase/migrations/001_patient_records.sql` to that project.
+3. Apply migrations in filename order. Fresh 001 explicitly grants service_role SELECT/INSERT for server-only fixture provisioning. If 001 was already applied before that fix, apply `003_explicit_seed_privileges.sql` to repair privileges; it does not change patient RLS.
 4. Seed the two patients and one clinician using `npm run seed:synthetic` with the server-only service key and a fresh random `SYNTHETIC_SEED_PASSWORD` in your shell. This script is intentionally not an app endpoint. Do not commit the password or key. `.invalid` fixture emails are not deliverable addresses; demo sign-in uses passwords.
 5. `npm run dev`. Patient A/B use their pre-enrolled fixture accounts.
 6. `npm test && npm run typecheck && npm run build`.
@@ -31,7 +31,7 @@ No service-role credential is used by record routes. Patients cannot assign role
 
 ## Test status
 
-17 local tests passed: unauthenticated GET/PUT, patient ownership helper, cross-patient helper, clinician denial, invalid sections, owner-body/query overrides, malformed records/JSON, local save/read isolation, logged-out route access cross-origin/non-JSON write denial and no-store.
+32 local tests passed across record and QR routes. Record coverage: unauthenticated GET/PUT, patient ownership helper, cross-patient helper, clinician denial, invalid sections, owner-body/query overrides, malformed records/JSON, local save/read isolation, logged-out route access cross-origin/non-JSON write denial and no-store.
 
 Persistence is mocked in the route tests. Live Supabase RLS, session renewal, browser logout/back behavior, migration apply, seed, deployment, two physical phones and real network conditions are **not yet tested**. See `docs/acceptance.md`. The security assertions do not constitute a clinical or regulatory certification.
 
@@ -48,3 +48,13 @@ Persistence is mocked in the route tests. Live Supabase RLS, session renewal, br
 ## Limits
 
 QR-only, synthetic records, online-only. No ABHA integration, diagnosis, OCR, blockchain, licensure verification or production claims. Revocation will stop future server reads, not screenshots, memory or copies already taken. Do not enter real health data. The core grant/scan/approve/read/revoke flow is planned, not functioning in phase 1.
+
+## Phase 2 API
+
+Apply `supabase/migrations/002_single_use_qr.sql` after 001. POST `/api/qr-requests` accepts selected sections as an authenticated patient and returns a short-lived opaque token once. POST `/api/qr-requests/claim` accepts that token from a signed-in clinician. GET `/api/qr-requests/{id}` permits only request owner or bound claimant and returns no records or token. Database functions own expiry, single-use row locking and rate limits (10 claim attempts per clinician per minute). Browser QR contains raw opaque token only, not a URL, patient ID or record. Manual fallback uses the full token to avoid a guessable short code. Creation expires previous unclaimed requests.
+
+Camera scanning uses BarcodeDetector when available and manual fallback otherwise. A claimant display name is not verified licensure. No patient approval or record disclosure exists yet. RPC tests are mocked; actual concurrent claim, rate limit and RLS require deployed DB verification.
+
+### Resuming an interrupted synthetic seed
+
+The seed script reuses exact fixture email accounts and fills only missing profiles/sections. It does not reset passwords, change existing roles or overwrite edited records. A differing fixture profile stops for review. After applying migration 003, rerun with the original seed password environment; accounts already created retain their original password. Never run this script against CareTrail or a real-patient project. Migration source tests check explicit grants but are not live Postgres proof.
