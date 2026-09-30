@@ -9,4 +9,4 @@ export async function proxy(request:NextRequest) {
  response.headers.set('Cache-Control','no-store');
  return response;
 }
-export const config={matcher:['/patient/:path*','/api/:path*','/login']};
+export const config={matcher:['/clinician/:path*','/patient/:path*','/api/:path*','/login']};
